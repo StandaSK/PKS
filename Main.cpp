@@ -208,6 +208,13 @@ char* getUDPDstPortName(pkts *paket, definicie *def) {
 	return "N/A";
 }
 
+bool isARP(pkts *paket, definicie *def) {
+	if (strcmp(getEtherTypeName(paket, def), "ARP_(Address_Resolution_Protocol)") == 0)
+		return true;
+
+	return false;
+}
+
 bool isIPv4(pkts *paket, definicie *def) {
 	if (strcmp(getEtherTypeName(paket, def), "Internet_IP_(IPv4)") == 0)
 		return true;
@@ -412,6 +419,55 @@ void vypisVsetko(pkts *prvy_paket, definicie *def) {
 	vypisSrcIPadresy(prvy_paket, akt->poradie, def);
 }
 
+// Vypis vsetkych ARP komunikacii
+void vypisARPKomunikacii(pkts *prvy_paket, definicie *def) {
+	pkts *akt = prvy_paket;
+
+	while (1) {
+		if (isARP(akt, def)) {
+			printf("Ramec %d\n", akt->poradie);
+			printf("Dlzka ramca poskytnuta pcap API - %d B\n", akt->header->len);
+			if ((akt->header->len + 4) <= 64) {
+				printf("Dlzka ramca prenasaneho po mediu - 64 B\n");
+			}
+			else printf("Dlzka ramca prenasaneho po mediu - %d B\n", akt->header->len + 4);
+
+			printf("Ethernet II\n");
+
+			printf("Zdrojova MAC adresa: ");
+			for (unsigned int i = 6; i < 12; i++) {
+				printf("%.2x ", akt->data[i]);
+			}
+			putchar('\n');
+
+			printf("Cielova MAC adresa: ");
+			for (unsigned int i = 0; i < 6; i++) {
+				printf("%.2x ", akt->data[i]);
+			}
+			putchar('\n');
+
+			printf("ARP\n");
+
+			printf("Typ ARP operacie: %d - %s\n", getARPOperation(akt), getARPOperationName(akt, def));
+
+			for (unsigned int i = 0; i < akt->header->caplen; i++) {
+				if ((i % 16) == 0) printf("\n");
+				if ((i % 16) == 8) printf(" ");
+				printf("%.2x ", akt->data[i]);
+			}
+
+			printf("\n\n");
+		}
+
+		if (akt->next != NULL) {
+			akt = akt->next;
+		}
+		else {
+			break;
+		}
+	}
+}
+
 // Vypis vsetkych TCP komunikacii s 'text' portom
 void vypisTCPKomunikacii(pkts *prvy_paket, char *text, definicie *def) {
 	pkts *akt = prvy_paket;
@@ -533,6 +589,71 @@ void vypisUDPKomunikacii(pkts *prvy_paket, char *text, definicie *def) {
 			printf("Zdrojovy port: %d\n", src);
 			dst = getUDPDstPort(akt);
 			printf("Cielovy port: %d\n", dst);
+
+			for (unsigned int i = 0; i < akt->header->caplen; i++) {
+				if ((i % 16) == 0) printf("\n");
+				if ((i % 16) == 8) printf(" ");
+				printf("%.2x ", akt->data[i]);
+			}
+
+			printf("\n\n");
+		}
+
+		if (akt->next != NULL) {
+			akt = akt->next;
+		}
+		else {
+			break;
+		}
+	}
+}
+
+// Vypis vsetkych ICMP komunikacii
+void vypisICMPKomunikacii(pkts *prvy_paket, definicie *def) {
+	pkts *akt = prvy_paket;
+
+	while (1) {
+		if (isICMP(akt, def)) {
+			printf("Ramec %d\n", akt->poradie);
+			printf("Dlzka ramca poskytnuta pcap API - %d B\n", akt->header->len);
+			if ((akt->header->len + 4) <= 64) {
+				printf("Dlzka ramca prenasaneho po mediu - 64 B\n");
+			}
+			else printf("Dlzka ramca prenasaneho po mediu - %d B\n", akt->header->len + 4);
+
+			printf("Ethernet II\n");
+
+			printf("Zdrojova MAC adresa: ");
+			for (unsigned int i = 6; i < 12; i++) {
+				printf("%.2x ", akt->data[i]);
+			}
+			putchar('\n');
+
+			printf("Cielova MAC adresa: ");
+			for (unsigned int i = 0; i < 6; i++) {
+				printf("%.2x ", akt->data[i]);
+			}
+			putchar('\n');
+
+			printf("IPv4\n");
+
+			unsigned long src = getSrcIP(akt);
+
+			printf("Zdrojova IP adresa: ");
+			printf("%d.", src & 0xFF);
+			printf("%d.", src >> 8 & 0xFF);
+			printf("%d.", src >> 16 & 0xFF);
+			printf("%d\n", src >> 24 & 0xFF);
+
+			unsigned long dst = getDstIP(akt);
+
+			printf("Cielova IP adresa: ");
+			printf("%d.", dst & 0xFF);
+			printf("%d.", dst >> 8 & 0xFF);
+			printf("%d.", dst >> 16 & 0xFF);
+			printf("%d\n", dst >> 24 & 0xFF);
+
+			printf("Typ ICMP spravy: %d - %s\n", getICMPType(akt), getICMPTypeName(akt, def));
 
 			for (unsigned int i = 0; i < akt->header->caplen; i++) {
 				if ((i % 16) == 0) printf("\n");
@@ -710,10 +831,10 @@ int main() {
 			vypisUDPKomunikacii(prvy_paket, "tftp", def);
 			break;
 		case 'h':
-			printf("h este nie je dokoncene\n");
+			vypisICMPKomunikacii(prvy_paket, def);
 			break;
 		case 'i':
-			printf("i este nie je dokoncene\n");
+			vypisARPKomunikacii(prvy_paket, def);
 			break;
 		case 'p':
 			vypis10(prvy_paket, last_paket, def);
