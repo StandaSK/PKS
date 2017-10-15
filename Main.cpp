@@ -243,7 +243,47 @@ bool isUDP(pkts *paket, definicie *def) {
 	return false;
 }
 
-unsigned long getSrcIP(pkts * paket) {
+unsigned long getARPSrcIP(pkts *paket) {
+	unsigned char pole[4];
+
+	for (int i = 0; i < 4; i++) {
+		pole[i] = paket->data[28 + i];
+	}
+
+	return *(unsigned long *)pole;
+}
+
+unsigned long getARPDstIP(pkts *paket) {
+	unsigned char pole[4];
+
+	for (int i = 0; i < 4; i++) {
+		pole[i] = paket->data[38 + i];
+	}
+
+	return *(unsigned long *)pole;
+}
+
+long long getARPSrcMAC(pkts *paket) {
+	unsigned char pole[6];
+
+	for (int i = 0; i < 6; i++) {
+		pole[i] = paket->data[22 + i];
+	}
+
+	return *(long long *)pole;
+}
+
+long long getARPDstMAC(pkts *paket) {
+	unsigned char pole[6];
+
+	for (int i = 0; i < 6; i++) {
+		pole[i] = paket->data[32 + i];
+	}
+
+	return *(long long *)pole;
+}
+
+unsigned long getIPv4SrcIP(pkts *paket) {
 	unsigned char pole[4];
 
 	for (int i = 0; i < 4; i++) {
@@ -253,7 +293,7 @@ unsigned long getSrcIP(pkts * paket) {
 	return *(unsigned long *)pole;
 }
 
-unsigned long getDstIP(pkts *paket) {
+unsigned long getIPv4DstIP(pkts *paket) {
 	unsigned char pole[4];
 
 	for (int i = 0; i < 4; i++) {
@@ -278,7 +318,7 @@ void vypisSrcIPadresy(pkts *prvy_paket, int packetCount, definicie *def) {
 	}
 
 	while (1) {
-		unsigned long aktIP = getSrcIP(akt);
+		unsigned long aktIP = getIPv4SrcIP(akt);
 
 		for (int i = 0; i < packetCount; i++) {
 			if (isIPv4(akt, def)) {
@@ -425,6 +465,33 @@ void vypisARPKomunikacii(pkts *prvy_paket, definicie *def) {
 
 	while (1) {
 		if (isARP(akt, def)) {
+			printf("ARP-%s, ", getARPOperationName(akt, def));
+
+			unsigned int dstIP = getARPDstIP(akt);
+			printf("IP adresa: %d.", dstIP & 0xFF);
+			printf("%d.", dstIP >> 8 & 0xFF);
+			printf("%d.", dstIP >> 16 & 0xFF);
+			printf("%d,\t", dstIP >> 24 & 0xFF);
+
+			long long dstMAC = getARPDstMAC(akt);
+			printf("MAC adresa: %.2x ", (int) (dstMAC & 0xFF));
+			printf("%.2x ", (int) (dstMAC >> 8 & 0xFF));
+			printf("%.2x ", (int) (dstMAC >> 16 & 0xFF));
+			printf("%.2x ", (int) (dstMAC >> 24 & 0xFF));
+			printf("%.2x ", (int) (dstMAC >> 32 & 0xFF));
+			printf("%.2x\n", (int) (dstMAC >> 40 & 0xFF));
+
+			unsigned int srcIP = getARPSrcIP(akt);
+			printf("Zdrojova IP: %d.", srcIP & 0xFF);
+			printf("%d.", srcIP >> 8 & 0xFF);
+			printf("%d.", srcIP >> 16 & 0xFF);
+			printf("%d,\t", srcIP >> 24 & 0xFF);
+
+			printf("Cielova IP: %d.", dstIP & 0xFF);
+			printf("%d.", dstIP >> 8 & 0xFF);
+			printf("%d.", dstIP >> 16 & 0xFF);
+			printf("%d\n", dstIP >> 24 & 0xFF);
+
 			printf("Ramec %d\n", akt->poradie);
 			printf("Dlzka ramca poskytnuta pcap API - %d B\n", akt->header->len);
 			if ((akt->header->len + 4) <= 64) {
@@ -445,10 +512,6 @@ void vypisARPKomunikacii(pkts *prvy_paket, definicie *def) {
 				printf("%.2x ", akt->data[i]);
 			}
 			putchar('\n');
-
-			printf("ARP\n");
-
-			printf("Typ ARP operacie: %d - %s\n", getARPOperation(akt), getARPOperationName(akt, def));
 
 			for (unsigned int i = 0; i < akt->header->caplen; i++) {
 				if ((i % 16) == 0) printf("\n");
@@ -497,7 +560,7 @@ void vypisTCPKomunikacii(pkts *prvy_paket, char *text, definicie *def) {
 
 			printf("IPv4\n");
 
-			unsigned long src = getSrcIP(akt);
+			unsigned long src = getIPv4SrcIP(akt);
 
 			printf("Zdrojova IP adresa: ");
 			printf("%d.", src & 0xFF);
@@ -505,7 +568,7 @@ void vypisTCPKomunikacii(pkts *prvy_paket, char *text, definicie *def) {
 			printf("%d.", src >> 16 & 0xFF);
 			printf("%d\n", src >> 24 & 0xFF);
 
-			unsigned long dst = getDstIP(akt);
+			unsigned long dst = getIPv4DstIP(akt);
 
 			printf("Cielova IP adresa: ");
 			printf("%d.", dst & 0xFF);
@@ -567,7 +630,7 @@ void vypisUDPKomunikacii(pkts *prvy_paket, char *text, definicie *def) {
 
 			printf("IPv4\n");
 
-			unsigned long src = getSrcIP(akt);
+			unsigned long src = getIPv4SrcIP(akt);
 
 			printf("Zdrojova IP adresa: ");
 			printf("%d.", src & 0xFF);
@@ -575,7 +638,7 @@ void vypisUDPKomunikacii(pkts *prvy_paket, char *text, definicie *def) {
 			printf("%d.", src >> 16 & 0xFF);
 			printf("%d\n", src >> 24 & 0xFF);
 
-			unsigned long dst = getDstIP(akt);
+			unsigned long dst = getIPv4DstIP(akt);
 
 			printf("Cielova IP adresa: ");
 			printf("%d.", dst & 0xFF);
@@ -637,7 +700,7 @@ void vypisICMPKomunikacii(pkts *prvy_paket, definicie *def) {
 
 			printf("IPv4\n");
 
-			unsigned long src = getSrcIP(akt);
+			unsigned long src = getIPv4SrcIP(akt);
 
 			printf("Zdrojova IP adresa: ");
 			printf("%d.", src & 0xFF);
@@ -645,7 +708,7 @@ void vypisICMPKomunikacii(pkts *prvy_paket, definicie *def) {
 			printf("%d.", src >> 16 & 0xFF);
 			printf("%d\n", src >> 24 & 0xFF);
 
-			unsigned long dst = getDstIP(akt);
+			unsigned long dst = getIPv4DstIP(akt);
 
 			printf("Cielova IP adresa: ");
 			printf("%d.", dst & 0xFF);
