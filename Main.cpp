@@ -462,26 +462,41 @@ void vypisVsetko(pkts *prvy_paket, definicie *def) {
 // Vypis vsetkych ARP komunikacii
 void vypisARPKomunikacii(pkts *prvy_paket, definicie *def) {
 	pkts *akt = prvy_paket;
+	int i = 1;
 
 	while (1) {
 		if (isARP(akt, def)) {
-			printf("ARP-%s, ", getARPOperationName(akt, def));
+			char *operation = getARPOperationName(akt, def);
 
-			unsigned int dstIP = getARPDstIP(akt);
-			printf("IP adresa: %d.", dstIP & 0xFF);
-			printf("%d.", dstIP >> 8 & 0xFF);
-			printf("%d.", dstIP >> 16 & 0xFF);
-			printf("%d,\t", dstIP >> 24 & 0xFF);
+			printf("ARP-%s, ", operation);
 
-			long long dstMAC = getARPDstMAC(akt);
-			printf("MAC adresa: %.2x ", (int) (dstMAC & 0xFF));
-			printf("%.2x ", (int) (dstMAC >> 8 & 0xFF));
-			printf("%.2x ", (int) (dstMAC >> 16 & 0xFF));
-			printf("%.2x ", (int) (dstMAC >> 24 & 0xFF));
-			printf("%.2x ", (int) (dstMAC >> 32 & 0xFF));
-			printf("%.2x\n", (int) (dstMAC >> 40 & 0xFF));
+			unsigned long dstIP = getARPDstIP(akt);
 
-			unsigned int srcIP = getARPSrcIP(akt);
+			if (strcmp(operation, "Request") == 0) {
+				printf("IP adresa: %d.", dstIP & 0xFF);
+				printf("%d.", dstIP >> 8 & 0xFF);
+				printf("%d.", dstIP >> 16 & 0xFF);
+				printf("%d,\t", dstIP >> 24 & 0xFF);
+
+				printf("MAC adresa: ???\n");
+			}
+			else if (strcmp(operation, "Reply") == 0) {
+				unsigned long srcIP = getARPSrcIP(akt);
+				printf("IP: %d.", srcIP & 0xFF);
+				printf("%d.", srcIP >> 8 & 0xFF);
+				printf("%d.", srcIP >> 16 & 0xFF);
+				printf("%d,\t", srcIP >> 24 & 0xFF);
+
+				long long srcMAC = getARPSrcMAC(akt);
+				printf("MAC adresa: %.2x ", (int)(srcMAC & 0xFF));
+				printf("%.2x ", (int)(srcMAC >> 8 & 0xFF));
+				printf("%.2x ", (int)(srcMAC >> 16 & 0xFF));
+				printf("%.2x ", (int)(srcMAC >> 24 & 0xFF));
+				printf("%.2x ", (int)(srcMAC >> 32 & 0xFF));
+				printf("%.2x\n", (int)(srcMAC >> 40 & 0xFF));
+			}
+
+			unsigned long srcIP = getARPSrcIP(akt);
 			printf("Zdrojova IP: %d.", srcIP & 0xFF);
 			printf("%d.", srcIP >> 8 & 0xFF);
 			printf("%d.", srcIP >> 16 & 0xFF);
@@ -520,6 +535,129 @@ void vypisARPKomunikacii(pkts *prvy_paket, definicie *def) {
 			}
 
 			printf("\n\n");
+
+			/*if (strcmp(getARPOperationName(akt, def), "Request")) {
+				pkts *pom = akt;
+
+				while (1) {
+					if (isARP(pom, def) && (strcmp(getARPOperationName(pom, def), "Reply") == 0) && (getARPDstIP(pom) == getARPSrcIP(akt)) && (getARPSrcIP(pom) == getARPDstIP(akt))) {
+						printf("Komunikacia c.%d\n", i++);
+						printf("ARP-Request, ");
+
+						unsigned long dstIP = getARPDstIP(akt);
+						printf("IP adresa: %d.", dstIP & 0xFF);
+						printf("%d.", dstIP >> 8 & 0xFF);
+						printf("%d.", dstIP >> 16 & 0xFF);
+						printf("%d,\t", dstIP >> 24 & 0xFF);
+
+						printf("MAC adresa: ???\n");
+
+						unsigned long srcIP = getARPSrcIP(akt);
+						printf("Zdrojova IP: %d.", srcIP & 0xFF);
+						printf("%d.", srcIP >> 8 & 0xFF);
+						printf("%d.", srcIP >> 16 & 0xFF);
+						printf("%d,\t", srcIP >> 24 & 0xFF);
+
+						printf("Cielova IP: %d.", dstIP & 0xFF);
+						printf("%d.", dstIP >> 8 & 0xFF);
+						printf("%d.", dstIP >> 16 & 0xFF);
+						printf("%d\n", dstIP >> 24 & 0xFF);
+
+						printf("Ramec %d\n", akt->poradie);
+						printf("Dlzka ramca poskytnuta pcap API - %d B\n", akt->header->len);
+						if ((akt->header->len + 4) <= 64) {
+							printf("Dlzka ramca prenasaneho po mediu - 64 B\n");
+						}
+						else printf("Dlzka ramca prenasaneho po mediu - %d B\n", akt->header->len + 4);
+
+						printf("Ethernet II\n");
+
+						printf("Zdrojova MAC adresa: ");
+						for (unsigned int i = 6; i < 12; i++) {
+							printf("%.2x ", akt->data[i]);
+						}
+						putchar('\n');
+
+						printf("Cielova MAC adresa: ");
+						for (unsigned int i = 0; i < 6; i++) {
+							printf("%.2x ", akt->data[i]);
+						}
+						putchar('\n');
+
+						for (unsigned int i = 0; i < akt->header->caplen; i++) {
+							if ((i % 16) == 0) printf("\n");
+							if ((i % 16) == 8) printf(" ");
+							printf("%.2x ", akt->data[i]);
+						}
+
+						printf("\n\n");
+
+						printf("ARP-Reply, ");
+
+						srcIP = getARPSrcIP(pom);
+						printf("IP: %d.", srcIP & 0xFF);
+						printf("%d.", srcIP >> 8 & 0xFF);
+						printf("%d.", srcIP >> 16 & 0xFF);
+						printf("%d,\t", srcIP >> 24 & 0xFF);
+						
+						long long srcMAC = getARPSrcMAC(pom);
+						printf("MAC adresa: %.2x ", (int)(srcMAC & 0xFF));
+						printf("%.2x ", (int)(srcMAC >> 8 & 0xFF));
+						printf("%.2x ", (int)(srcMAC >> 16 & 0xFF));
+						printf("%.2x ", (int)(srcMAC >> 24 & 0xFF));
+						printf("%.2x ", (int)(srcMAC >> 32 & 0xFF));
+						printf("%.2x\n", (int)(srcMAC >> 40 & 0xFF));
+
+						srcIP = getARPSrcIP(pom);
+						printf("Zdrojova IP: %d.", srcIP & 0xFF);
+						printf("%d.", srcIP >> 8 & 0xFF);
+						printf("%d.", srcIP >> 16 & 0xFF);
+						printf("%d,\t", srcIP >> 24 & 0xFF);
+
+						printf("Cielova IP: %d.", dstIP & 0xFF);
+						printf("%d.", dstIP >> 8 & 0xFF);
+						printf("%d.", dstIP >> 16 & 0xFF);
+						printf("%d\n", dstIP >> 24 & 0xFF);
+
+						printf("Ramec %d\n", pom->poradie);
+						printf("Dlzka ramca poskytnuta pcap API - %d B\n", pom->header->len);
+						if ((pom->header->len + 4) <= 64) {
+							printf("Dlzka ramca prenasaneho po mediu - 64 B\n");
+						}
+						else printf("Dlzka ramca prenasaneho po mediu - %d B\n", pom->header->len + 4);
+
+						printf("Ethernet II\n");
+
+						printf("Zdrojova MAC adresa: ");
+						for (unsigned int i = 6; i < 12; i++) {
+							printf("%.2x ", pom->data[i]);
+						}
+						putchar('\n');
+
+						printf("Cielova MAC adresa: ");
+						for (unsigned int i = 0; i < 6; i++) {
+							printf("%.2x ", pom->data[i]);
+						}
+						putchar('\n');
+
+						for (unsigned int i = 0; i < pom->header->caplen; i++) {
+							if ((i % 16) == 0) printf("\n");
+							if ((i % 16) == 8) printf(" ");
+							printf("%.2x ", pom->data[i]);
+						}
+
+						printf("\n\n");
+					}
+
+					if (pom->next != NULL) {
+						pom = pom->next;
+					}
+					else {
+						break;
+					}
+				}
+			}*/
+			
 		}
 
 		if (akt->next != NULL) {
@@ -736,6 +874,26 @@ void vypisICMPKomunikacii(pkts *prvy_paket, definicie *def) {
 	}
 }
 
+void vypisFTPdataRamcov(pkts *prvy_paket, definicie *def) {
+	pkts *akt = prvy_paket;
+	int pocet = 0;
+
+	while (1) {
+		if (isTCP(akt, def) && ((strcmp(getTCPDstPortName(akt, def), "ftp-data") == 0) || (strcmp(getTCPSrcPortName(akt, def), "ftp-data") == 0))) {
+			vypis(akt);
+			pocet++;
+		}
+
+		if (akt->next != NULL) {
+			akt = akt->next;
+		}
+		else {
+			printf("Pocet FTP-data ramcov v subore: %d\n", pocet);
+			break;
+		}
+	}
+}
+
 // Vypis menu
 void vypisMenu() {
 	printf("Vyberte typ komunikacie na analyzu:\n");
@@ -748,6 +906,7 @@ void vypisMenu() {
 	printf("g) Vsetky TFTP komunikacie\n");
 	printf("h) Vsetky ICMP komunikacie\n");
 	printf("i) Vsetky ARP dvojice\n");
+	printf("j) Vsetky FTP-data ramce\n");
 	printf("p) Vypis prvych 10 a poslednych 10 komunikacii zo suboru\n");
 	printf("v) Vypis vsetkych komunikacii zo suboru\n");
 	printf("x) Ukoncit program\n");
@@ -842,7 +1001,8 @@ int main() {
 	//char nazov_suboru[] = "vzorky_pcap_na_analyzu\\trace-3.pcap";		// Toto je maly subor (17 ramcov)
 	//char nazov_suboru[] = "vzorky_pcap_na_analyzu\\trace-16.pcap";	// Toto je pamatovo najvacsi subor
 	//char nazov_suboru[] = "vzorky_pcap_na_analyzu\\trace-23.pcap";	// Tu je 802.3 RAW
-	char nazov_suboru[] = "vzorky_pcap_na_analyzu\\eth-8.pcap";			// Toto je pamatovo najmensi subor
+	//char nazov_suboru[] = "vzorky_pcap_na_analyzu\\eth-8.pcap";			// Toto je pamatovo najmensi subor
+	char nazov_suboru[] = "vzorky_pcap_na_analyzu\\trace-14.pcap";
 	char errbuff[PCAP_ERRBUF_SIZE];
 	pcap_t *pakety = pcap_open_offline(nazov_suboru, errbuff);
 	pcap_pkthdr *header;
@@ -898,6 +1058,9 @@ int main() {
 			break;
 		case 'i':
 			vypisARPKomunikacii(prvy_paket, def);
+			break;
+		case 'j':
+			vypisFTPdataRamcov(prvy_paket, def);
 			break;
 		case 'p':
 			vypis10(prvy_paket, last_paket, def);
