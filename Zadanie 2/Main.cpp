@@ -5,9 +5,11 @@
 #include <ws2tcpip.h>
 #include <string>
 #include <iostream>
+#include <vector>
 
 #pragma comment(lib, "Ws2_32.lib")
 
+// Hlavicka vlastneho protokolu
 struct header {
 	unsigned long poradie;
 	unsigned long total;
@@ -15,24 +17,31 @@ struct header {
 	unsigned long checksum;
 	unsigned long flags;
 
+#define DATA 0
 #define ACK 0xfff00fff
-#define KPALV 0x0f0f0f00
-#define KPALVRSPNS 0xf0f0f000
 };
 
+// Struktura na uchovavanie dat
 struct packet {
 	unsigned long dlzka;
 	unsigned char *data;
 };
 
+// Struktura na uchovavanie fragmentu
+struct fragment {
+	unsigned char *data;
+	unsigned short dlzka;
+	unsigned long id;
+};
+
 #define debug 0
+#define vnesenie_chyby 0
 
 #define port 8086
-#define maxSize 5000
+#define maxSize 65507 // 65535 (max_udp_length) - 20 (ip_header_size) - 8 (udp_header_size)
 #define polynom 0xedb88320
 #define socket_timeout_sec 2
 #define headerSize sizeof(header)
-#define capsuleSize sizeof(unsigned short) + headerSize
 
 // Cyclic redundancy check
 unsigned long crc32b(const unsigned char *data, unsigned long dlzka) {
@@ -53,9 +62,83 @@ unsigned long crc32b(const unsigned char *data, unsigned long dlzka) {
 	return ~result;
 }
 
+// Rozdeli data na jednotlive fragmenty
+std::vector<fragment> fragmentacia(packet *data, unsigned long maxVelkostFragmentu) {
+	std::vector<fragment> result;
+	unsigned long dlzkaFragmentu, i = 1, offset = 0;
+
+	while (offset < data->dlzka) {
+		if (data->dlzka - offset < maxVelkostFragmentu) {
+			dlzkaFragmentu = data->dlzka - offset;
+		}
+		else {
+			dlzkaFragmentu = maxVelkostFragmentu;
+		}
+
+		fragment *akt = new fragment;
+		akt->data = data->data + offset;
+		akt->dlzka = dlzkaFragmentu;
+		akt->id = i++;
+
+		result.push_back(*akt);
+
+		offset += dlzkaFragmentu;
+	}
+
+	if (debug) {
+		printf("Fragmentacia spravy dlzky %d\n", data->dlzka);
+		printf("Maximalna velkost fragmentu: %d\n", maxVelkostFragmentu);
+		printf("Sprava: %s\n", data->data);
+
+		for (i = 0; i < result.size(); i++) {
+			printf("id: %d\n", result[i].id);
+			printf("dlzka: %d\n", result[i].dlzka);
+			printf("data: %.*s\n", result[i].dlzka, result[i].data);
+		}
+	}
+
+	return result;
+}
+
+// Spoji jednotlive fragmenty dohromady
+packet *defragmentacia(std::vector<fragment> fragmenty) {
+	packet *result = new packet;
+	unsigned long i, j, offset = 0, dlzkaDat = 0;
+
+	for (i = 0; i < fragmenty.size(); i++) {
+		dlzkaDat += fragmenty[i].dlzka;
+	}
+
+	if (debug) {
+		printf("Defragmentacia spravy dlzky %d\n", dlzkaDat);
+		printf("Pocet fragmentov: %d\n", fragmenty.size());
+	}
+
+	result->dlzka = dlzkaDat;
+	result->data = (unsigned char *) malloc (dlzkaDat);
+
+	for (i = 0; i < fragmenty.size(); i++) {
+		if (debug) {
+			printf("Fragment %d\n", i+1);
+			printf("Sprava: %.*s\n", fragmenty[i].dlzka, fragmenty[i].data);
+		}
+
+		for (j = 0; j < fragmenty[i].dlzka; j++) {
+			*(result->data + offset + j) = *(fragmenty[i].data + j);
+		}
+		offset += fragmenty[i].dlzka;
+	}
+
+	if (debug) {
+		printf("Defragmentovana sprava: %.*s\n", result->dlzka, result->data);
+	}
+
+	return result;
+}
+
 // Obali data hlavickou
 packet *enkapsulacia(header hlavicka, packet *data) {
-	packet *final = (packet *) malloc (sizeof(packet));
+	packet *final = new packet;
 	final->dlzka = (unsigned short) headerSize + data->dlzka;
 
 	// Tvorba hlavicky paketu
@@ -87,7 +170,7 @@ packet *enkapsulacia(header hlavicka, packet *data) {
 
 // Z paketu overi checksum, vytiahne data
 packet *deenkapsulacia(header *hlavicka, packet *data) {
-	packet *final = (packet *) malloc (sizeof(packet));
+	packet *final = new packet;
 	
 	// Kontrola checksum
 	unsigned long checksum = ((header *) data->data)->checksum;
@@ -128,7 +211,7 @@ packet *deenkapsulacia(header *hlavicka, packet *data) {
 
 // Spusti prijimac
 int prijimac() {
-	int initError;
+	int i, initError;
 
 	WSADATA wsaData;
 	SOCKET udpsocket = INVALID_SOCKET;
@@ -174,11 +257,13 @@ int prijimac() {
 	char *fragment_buffer = (char *) malloc (maxSize);
 
 	// Hlavicka je na zaciatku prijatych dat
-	header *fragment_header = (header *) fragment_buffer;
+	header *fragment_header = new header;
 
 	// Prichadzajuca adresa
-	int address_size = sizeof(SOCKADDR_IN);
 	SOCKADDR_IN address;
+
+	// Velkost prichadzajucej adresy
+	int address_size = sizeof(SOCKADDR_IN);
 
 	// Vysielany paket s potvrdenim
 	packet *vysielany_paket = new packet;
@@ -186,12 +271,24 @@ int prijimac() {
 	// Vysielana hlavicka s potvrdenim
 	header *vysielana_hlavicka = new header;
 
+	// Pomocny buffer pre InetNtop
+	char pStringBuf[16];
+
+	// Pole fragmentov spravy
+	std::vector<fragment> fragmenty;
+
+	// Sucasny prijaty fragment
+	fragment *tmp;
+
+	// Packet na uchovanie celej spravy
+	packet *sprava;
+
 	while (1) {
 		printf("Cakam na data\n");
 
 		// Cakanie na data
 		int recv_size = recvfrom(udpsocket, fragment_buffer, maxSize, 0, (SOCKADDR *)& address, &address_size);
-
+		
 		if (recv_size == SOCKET_ERROR) {
 			printf("Nepodarilo sa prijat data. Chyba %d\n", WSAGetLastError());
 			continue;
@@ -201,19 +298,41 @@ int prijimac() {
 		prijaty_paket->dlzka = recv_size;
 		prijaty_paket = deenkapsulacia(fragment_header, prijaty_paket);
 
-		char pStringBuf[16];
 		printf("Bolo prijatych %d bajtov dat od %s na porte %d\n", recv_size, InetNtop(AF_INET, &address.sin_addr, pStringBuf, 16), ntohs(address.sin_port));
-		printf("Sprava dlzky %lu: %.*s\n", fragment_header->dlzka, fragment_header->dlzka, prijaty_paket->data);
+
+		// Ak nesedi checksum tak nepotvrdi prijatie paketu
+		if (prijaty_paket == NULL) {
+			printf("Zly checksum, zahadzujem paket\n");
+			prijaty_paket = new packet;
+			continue;
+		}
+
+		printf("Sprava %d/%d dlzky %lu: %.*s\n", fragment_header->poradie, fragment_header->total, fragment_header->dlzka, fragment_header->dlzka, prijaty_paket->data);
+
+		// Ak dany fragment este nebol prijaty
+		if (fragmenty.size() == (fragment_header->poradie - 1)) {
+			tmp = new fragment;
+			tmp->data = prijaty_paket->data;
+			tmp->dlzka = prijaty_paket->dlzka;
+			tmp->id = fragment_header->poradie;
+			fragmenty.push_back(*tmp);
+		}
 
 		vysielany_paket->data = NULL;
 		vysielany_paket->dlzka = 0;
 		vysielana_hlavicka->poradie = fragment_header->poradie;
 		vysielana_hlavicka->total = fragment_header->total;
 		vysielana_hlavicka->dlzka = 0;
-		vysielana_hlavicka->flags = 0;
+		vysielana_hlavicka->flags = ACK;
 		vysielany_paket = enkapsulacia(*vysielana_hlavicka, vysielany_paket);
 
 		sendto(udpsocket, (const char *) vysielany_paket->data, vysielany_paket->dlzka, 0, (SOCKADDR *)& address, address_size);
+
+		if (fragmenty.size() == fragment_header->total) {
+			sprava = defragmentacia(fragmenty);
+			printf("Defragmentovana sprava dlzky %d: %.*s\n", sprava->dlzka, sprava->dlzka, sprava->data);
+			fragmenty.clear();
+		}
 	}
 
 	closesocket(udpsocket);
@@ -223,8 +342,7 @@ int prijimac() {
 
 // Spusti vysielac
 int vysielac() {
-	int velkostFragmentu, initError;
-	//char volba;
+	int i, j, maxVelkostFragmentu, initError;
 
 	WSADATA wsaData;
 	SOCKET udpsocket = INVALID_SOCKET;
@@ -237,7 +355,6 @@ int vysielac() {
 	if (initError != NO_ERROR) {
 		printf("Zlyhala inicializacia kniznice WinSock! Chyba %d\n", initError);
 		printf("Pokracujte stlacenim klavesu ENTER\n");
-		WSACleanup();
 		getchar();
 		return 1;
 	}
@@ -259,15 +376,28 @@ int vysielac() {
 		return 1;
 	}
 
-	printf("Zadajte velkost fragmentu:\n");
-	scanf("%d", &velkostFragmentu);
+	printf("Zadajte maximalnu velkost fragmentu:\n");
+	scanf("%d", &maxVelkostFragmentu);
 	getchar();	// preskocenie noveho riadku
+
+	if (maxVelkostFragmentu < 1) {
+		printf("Neplatna velkost fragmentu!\n");
+		printf("Pokracujte stlacenim klavesu ENTER\n");
+		WSACleanup();
+		getchar();
+		return 1;
+	}
+
+	// Zadavana IP adresa prijimaca
+	std::string IPprijimaca;
+	printf("Zadajte IP adresu prijimaca (format A.B.C.D):\n");
+	std::getline(std::cin, IPprijimaca);
 
 	memset((char *)& send_addr, 0, addr_size);
 	send_addr.sin_family = AF_INET;
 	send_addr.sin_port = htons(port);
 
-	if (InetPton(AF_INET, "127.0.0.1", &send_addr.sin_addr) != 1) {
+	if (InetPton(AF_INET, IPprijimaca.c_str(), &send_addr.sin_addr) != 1) {
 		printf("InetPton zlyhal! Chyba %d\n", WSAGetLastError());
 		printf("Pokracujte stlacenim klavesu ENTER\n");
 		WSACleanup();
@@ -277,15 +407,9 @@ int vysielac() {
 
 	// Vysielane udaje a ich velkost
 	packet *vysielany_paket = new packet;
-
-	// Buffer pre vysielane data
-	char *fragment_buffer = (char *) malloc (maxSize);
 	
-	// Hlavicka je na zaciatku vysielanych dat
-	header *fragment_header = (header *) fragment_buffer;
-
-	// Za hlavickou nasleduju data
-	//char *fragment_data = fragment_buffer + headerSize;
+	// Hlavicka vysielanych dat
+	header *fragment_header = new header;
 
 	// Prijaty paket a jeho dlzka
 	packet *prijaty_paket = new packet;
@@ -309,79 +433,105 @@ int vysielac() {
 	// Buffer na ulozenie "string" IP adresy zdroja odpovede
 	char rStringBuf[16];
 
+	// Pole fragmentov spravy
+	std::vector<fragment> fragmenty;
+
+	// Packet na uchovanie celej spravy
+	packet *sprava = new packet;
+
+	// Pocet fragmentov
+	unsigned int pocetFragmentov;
+
+	// Pomocna premenna pre vnesenie chyby
+	unsigned char tmp;
+
 	while (1) {
 		printf("\nZadaj text\n");
 		std::getline(std::cin, text);
-		fragment_header->poradie = 1;
-		fragment_header->total = 1;
-		fragment_header->flags = 0;
-		vysielany_paket->dlzka = text.size();
-		vysielany_paket->data = (unsigned char *) text.c_str();
-		vysielany_paket = enkapsulacia(*fragment_header, vysielany_paket);
 
-		for (int i = 1; i <= 5; i++) {
-			printf("Pokus o odoslanie %d/5\n", i);
-			sendto(udpsocket, (const char *)vysielany_paket->data, vysielany_paket->dlzka, 0, (SOCKADDR *)& send_addr, addr_size);
+		sprava->dlzka = text.size();
+		sprava->data = (unsigned char *) text.c_str();
 
-			printf("Cakam na potvrdzujuci paket\n");
-			int recv_size = recvfrom(udpsocket, (char *) prijaty_paket->data, maxSize, 0, (SOCKADDR *)& recv_addr, (int *) &recv_addr_size);
+		fragmenty = fragmentacia(sprava, maxVelkostFragmentu);
 
-			if (recv_size == SOCKET_ERROR) {
-				printf("Nepodarilo sa prijat data. Chyba %d\n", WSAGetLastError());
+		if ((sprava->dlzka % maxVelkostFragmentu) == 0) {
+			pocetFragmentov = sprava->dlzka / maxVelkostFragmentu;
+		}
+		else if (sprava->dlzka < maxVelkostFragmentu) {
+			pocetFragmentov = 1;
+		}
+		else {
+			pocetFragmentov = sprava->dlzka / maxVelkostFragmentu + 1;
+		}
 
-				if (i == 5) {
-					printf("Prijimac neodpoveda, ukoncujem vysielac\n");
-					closesocket(udpsocket);
-					WSACleanup();
-					return 1;
-				}
+		for (i = 0; i < pocetFragmentov; i++) {
+			fragment_header->poradie = i + 1;
+			fragment_header->total = pocetFragmentov;
+			fragment_header->flags = DATA;
+			vysielany_paket->dlzka = fragmenty[i].dlzka;
+			vysielany_paket->data = fragmenty[i].data;
+			vysielany_paket = enkapsulacia(*fragment_header, vysielany_paket);
 
-				continue;
+			if (vnesenie_chyby) {
+				tmp = (vysielany_paket->data)[2];
 			}
 
-			prijaty_paket->dlzka = recv_size;
-			prijaty_paket = deenkapsulacia(prijata_hlavicka, prijaty_paket);
-
-			if (strcmp(InetNtop(AF_INET, &recv_addr.sin_addr, rStringBuf, 16), InetNtop(AF_INET, &send_addr.sin_addr, sStringBuf, 16)) == 0) {
-				if (debug) {
-					printf("IP adresy ciela a prijateho ACK sa zhoduju\n");
+			for (j = 1; j <= 5; j++) {
+				if (vnesenie_chyby) {
+					if ((i == 0) && (j == 1)) {
+						(vysielany_paket->data)[2] = ~tmp;
+					}
+					else {
+						(vysielany_paket->data)[2] = tmp;
+					}
 				}
+
+				printf("Pokus %d/5 o odoslanie fragmentu %d/%d\n", j, i+1, pocetFragmentov);
+				sendto(udpsocket, (const char *)vysielany_paket->data, vysielany_paket->dlzka, 0, (SOCKADDR *)& send_addr, addr_size);
+
+				printf("Cakam na potvrdzovaci paket\n");
+				int recv_size = recvfrom(udpsocket, (char *)prijaty_paket->data, maxSize, 0, (SOCKADDR *)& recv_addr, (int *)&recv_addr_size);
+
+				if (recv_size == SOCKET_ERROR) {
+					printf("Nepodarilo sa prijat data. Chyba %d\n", WSAGetLastError());
+
+					if (j == 5) {
+						printf("Prijimac neodpoveda, ukoncujem vysielac\n");
+						closesocket(udpsocket);
+						WSACleanup();
+						return 1;
+					}
+
+					continue;
+				}
+
+				prijaty_paket->dlzka = recv_size;
+				prijaty_paket = deenkapsulacia(prijata_hlavicka, prijaty_paket);
+
+				// Ak nesedi checksum prijateho paketu
+				if (prijaty_paket == NULL) { continue; }
+
+				if ((strcmp(InetNtop(AF_INET, &recv_addr.sin_addr, rStringBuf, 16), InetNtop(AF_INET, &send_addr.sin_addr, sStringBuf, 16)) == 0) &&
+					(prijata_hlavicka->flags == ACK) && (prijata_hlavicka->poradie == fragment_header->poradie) && (prijata_hlavicka->total == fragment_header->total)){
+					printf("Potvrdzovaci paket uspesne prijaty!\n");
+				}
+				else {
+					printf("Nebol prijaty korektny potvrdzovaci paket\n");
+
+					if (j == 5) {
+						printf("Prijimac neodpoveda korektne, ukoncujem vysielac\n");
+						closesocket(udpsocket);
+						WSACleanup();
+						return 1;
+					}
+
+					continue;
+				}
+
+				break;
 			}
-			// TODO overenie ci ide o ACK
-			break;
 		}
 	}
-
-	/*printf("Chcete odoslat text alebo subor? [T/S]\n");
-	printf("Vysielac ukoncite stlacenim klavesu X\n");
-
-	while (volba = getchar()) {
-		getchar();	// Preskocenie znaku '\n'
-
-		switch (volba) {
-			case 'T':
-			case 't':
-				break;
-			case 's':
-			case 'S':
-			case 'f':
-			case 'F':
-				printf("Chyba: Tato funkcionalita nie je implementovana, skuste nejaku inu\n");
-				break;
-			case 'x':
-			case 'X':
-				printf("Ukoncujem vysielac\n");
-				closesocket(udpsocket);
-				WSACleanup();
-				return 0;
-			default:
-				printf("Znak \"%c\" nie je platnou volbou!\n", volba);
-				break;
-		}
-
-		printf("Chcete odoslat text alebo subor? [T/S]\n");
-		printf("Vysielac ukoncite stlacenim klavesu X\n");
-	}*/
 
 	closesocket(udpsocket);
 	WSACleanup();
